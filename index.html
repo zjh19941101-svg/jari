@@ -472,6 +472,7 @@ function buildDrawer(){
       <div class="ditem ${VIEW==='seat'?'on':''}" data-go="seat" ${dis}><span class="ic">🎫</span>${t('seat')}</div>
       <div class="ditem ${VIEW==='me'?'on':''}" data-go="me"><span class="ic">📊</span>${t('myrec')}</div>
       <div class="ditem ${VIEW==='notify'?'on':''}" data-go="notify"><span class="ic">🔔</span>${bi('알림 센터','通知中心')}</div>
+      <div class="ditem ${VIEW==='qa'?'on':''}" data-go="qa" ${dis}><span class="ic">💬</span>${bi('질문하기','提问')}</div>
       <div class="dsep"></div><div class="ditem" data-go="scan"><span class="ic">📷</span>${t('scan')}</div>
       <div class="ditem" data-go="join"><span class="ic">🔑</span>${t('joinCourse')}</div>
       ${ME?`<div class="ditem" data-go="logout"><span class="ic">⎋</span>${t('changeId')}</div>`:''}`; }
@@ -539,6 +540,7 @@ function homeView(){
     <h1>${ME?ME.name+t('welcome'):'자리 Jari'}</h1>
     <p>${t('heroP')}</p></div>
     <div id="todayHold"></div>
+    <div id="myTixHold"></div>
     ${courseCard}
     <div class="tiles">
       <div class="tile" data-go="checkin"><div class="ic">✓</div><div class="t">${t('tCheckin')}</div><div class="d">${checkinD}</div></div>
@@ -574,6 +576,49 @@ async function loadTodayClasses(){
       <div>${x.live?`<span class="badge b-ok">🔴 ${bi('출석중','签到中')}</span>`:`<span class="badge b-half">${bi('대기','待开始')}</span>`}</div></div></div>`).join("");
   hold.innerHTML=`<div style="margin-top:16px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:1px">📅 ${bi('오늘의 수업','今天的课')}</div>${cards}`;
   hold.querySelectorAll("[data-todaycourse]").forEach(b=>b.onclick=()=>{ const code=b.dataset.todaycourse; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); });
+}
+// 我的课程:演唱会门票样式
+async function loadMyTickets(){
+  const hold=$("myTixHold"); if(!hold||!ME)return;
+  const mine=myCourses(); const codes=Object.keys(mine); if(!codes.length)return;
+  const tix=[];
+  await Promise.all(codes.map(async code=>{
+    try{ const s=await get(ref(db,`courses/${code}`)); if(!s.exists())return; const c=s.val();
+      const seats=c.seats||{}; const myKey=Object.keys(seats).find(k=>seats[k]?.id===ME?.id);
+      const seat=myKey?`${myKey.split("-")[0]*1+1}-${colL(seatColIdx(c,myKey))}`:null;
+      const sem=c.semester||{};
+      // 出勤率
+      const mk=Object.keys(c.meetings||{}); let full=0; mk.forEach(id=>{ const ci=c.meetings[id].checkins?.[ME.id]; if(ci&&ci.pre&&ci.post)full++; });
+      const rate=mk.length?Math.round(full/mk.length*100):0;
+      tix.push({code,name:c.name||code,seat,time:sem.time||"",room:sem.room||"",rate}); }
+    catch{}
+  }));
+  if(!tix.length)return;
+  // 渐变色池(每张票不同色)
+  const grads=["linear-gradient(135deg,#2563eb,#0ea5e9)","linear-gradient(135deg,#7c3aed,#db2777)","linear-gradient(135deg,#059669,#10b981)","linear-gradient(135deg,#ea580c,#f59e0b)","linear-gradient(135deg,#0891b2,#6366f1)"];
+  const tickets=tix.map((x,i)=>{ const g=grads[i%grads.length];
+    return `<div data-tixcourse="${x.code}" style="cursor:pointer;margin-top:12px;border-radius:18px;overflow:hidden;box-shadow:0 4px 16px rgba(30,50,90,.12);background:#fff;border:1px solid var(--line)">
+      <div style="background:${g};color:#fff;padding:16px 18px 14px;position:relative">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div><div style="font-size:10px;letter-spacing:2px;opacity:.85;font-weight:800">JARI · ${bi('수강권','听课票')}</div>
+            <div style="font-size:19px;font-weight:800;margin-top:3px;line-height:1.15">${x.name}</div></div>
+          <div style="text-align:right;flex:none"><div style="font-size:10px;opacity:.8">${bi('출석','出勤')}</div><div style="font-size:18px;font-weight:800">${x.rate}%</div></div></div>
+        <div style="font-size:11px;opacity:.85;margin-top:4px;letter-spacing:1px">[${x.code}]</div>
+      </div>
+      <div style="position:relative;height:0;border-top:2px dashed var(--line2)"><span style="position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:var(--bg)"></span><span style="position:absolute;right:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:var(--bg)"></span></div>
+      <div style="display:flex;padding:14px 18px;gap:14px;align-items:center">
+        <div style="flex:none;text-align:center;min-width:64px">
+          <div class="tip" style="margin:0;font-size:10px">${bi('좌석','座位')}</div>
+          <div style="font-size:26px;font-weight:800;color:${x.seat?'var(--blue-d)':'var(--faint)'};line-height:1.1">${x.seat||'—'}</div></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink)">
+          ${x.time?`<div>🕐 ${x.time}</div>`:''}
+          ${x.room?`<div>📍 ${x.room}</div>`:''}
+          ${!x.time&&!x.room?`<div class="tip" style="margin:0">${bi('시간·강의실 미설정','未设时间·教室')}</div>`:''}
+          <div style="font-size:11px;color:var(--muted)">${ME.name} · ${ME.id}</div></div>
+        <div style="flex:none;color:var(--faint);font-size:20px">›</div></div></div>`;
+  }).join("");
+  hold.innerHTML=`<div style="margin-top:18px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:1px">🎫 ${bi('내 강의','我的课程')}</div>${tickets}`;
+  hold.querySelectorAll("[data-tixcourse]").forEach(b=>b.onclick=()=>{ const code=b.dataset.tixcourse; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); });
 }
 function joinPrompt(){
   $("modal").innerHTML=`<div class="overlay" id="ov"><div class="modal"><h3>${bi('강의 입장','进入课程')}</h3>
@@ -714,6 +759,20 @@ function showTicket(r,c){
 }
 async function cancelMySeat(){ const seats=COURSE?.seats||{}; for(const ek of Object.keys(seats)) if(seats[ek]?.id===ME.id) await set(ref(db,`courses/${COURSE_CODE}/seats/${ek}`),null); toast(bi("취소됨","已取消"),"info"); render(); }
 
+async function qaView(){
+  if(!COURSE_CODE||!COURSE){ return `<div class="pagehead"><h1>💬 ${bi('질문','提问')}</h1></div><div class="banner">${bi('먼저 강의에 입장하세요','请先进入一门课')}</div>`; }
+  const qaList=COURSE.questions||{};
+  const mine=Object.keys(qaList).filter(id=>qaList[id].sid===ME.id).sort((a,b)=>(qaList[b].ts||0)-(qaList[a].ts||0));
+  const list=mine.length?mine.map(id=>{ const q=qaList[id];
+    return `<div class="card" style="margin-bottom:10px"><div style="font-size:14px">${q.text} ${q.anon?`<span class="tip">(${bi('익명','匿名')})</span>`:''}</div><div class="tip" style="margin:3px 0 0">${fmtTime(q.ts)}</div>
+      ${q.reply?`<div style="background:#eff6ff;border-radius:8px;padding:10px;margin-top:8px;font-size:14px"><b style="color:var(--blue-d)">${bi('조교 답변','助教回复')}:</b> ${q.reply}<div class="tip" style="margin:3px 0 0">${fmtTime(q.repliedAt)}</div></div>`:`<div class="tip" style="margin-top:6px">⏳ ${bi('답변 대기중','等待回复')}</div>`}</div>`; }).join(""):`<div class="card"><p style="text-align:center;color:#9aa3ba;padding:20px">${bi('아직 질문이 없습니다','还没有提问')}</p></div>`;
+  return `<div class="pagehead"><h1>💬 ${bi('질문하기','提问')}</h1><div class="sub">${COURSE.name||COURSE_CODE} · ${bi('조교에게 1:1 질문','向助教1对1提问')}</div></div>
+    <div class="card"><textarea id="qaText" placeholder="${bi('질문을 입력하세요','输入你的问题')}" style="min-height:70px;resize:vertical"></textarea>
+      <label style="display:flex;align-items:center;gap:6px;margin:10px 0;font-weight:600"><input type="checkbox" id="qaAnon" style="width:auto"> ${bi('익명으로 질문','匿名提问')}</label>
+      <button class="btn" id="qaSend">${bi('질문 보내기','发送提问')}</button>
+      <div class="tip" style="margin-top:8px;text-align:center">${bi('내 질문은 조교만 볼 수 있습니다','你的提问只有助教能看到')}</div></div>
+    ${list}`;
+}
 async function notifyView(){
   const mine=myCourses(); const codes=Object.keys(mine);
   const items=[]; // {ts, icon, title, body, course}
@@ -803,7 +862,14 @@ async function meView(){
         <span style="font-size:9px;opacity:.85">${bi('좌석','座位')}</span><span style="font-size:17px;font-weight:800;line-height:1">${x.seat}</span></div>
       <div style="flex:1;min-width:0"><div style="font-weight:800;font-size:14px">${x.name}</div><div class="tip" style="margin:1px 0 0">[${x.code}]</div></div>
       <div style="text-align:right"><div style="font-size:16px;font-weight:800;color:${x.rate>=70?'var(--green)':x.rate>=40?'var(--late)':'var(--red)'}">${x.rate}%</div></div></div>`).join("")}</div>`:"";
+  // 缺席预警:某门课缺席≥3次
+  const ABSENT_WARN=3;
+  const warnCourses=courseRows.filter(x=>Math.max(0,x.total-x.attended)>=ABSENT_WARN);
+  const warnBanner = warnCourses.length?`<div class="card" style="background:#fff1f2;border-color:#fecdd3">
+    <div style="font-weight:800;color:var(--red);font-size:15px;margin-bottom:6px">⚠️ ${bi('결석 경고','缺席预警')}</div>
+    ${warnCourses.map(x=>`<div style="font-size:14px;margin:3px 0">${bi('「'+x.name+'」 결석','「'+x.name+'」已缺席')} <b style="color:var(--red)">${Math.max(0,x.total-x.attended)}${bi('회','次')}</b> ${bi('— 출석에 유의하세요','— 请注意出勤')}</div>`).join("")}</div>`:"";
   return `<div class="pagehead"><h1>${t('myrec')}</h1><div class="sub">${ME.name} · ${ME.id} · <a id="renameMe" style="color:var(--blue);cursor:pointer;font-weight:700">${bi('이름 수정','改名')}</a></div></div>
+    ${warnBanner}
     <div class="stat"><div class="statcard"><div class="num b">${courseRows.length}</div><div class="t">${t('takingN')}</div></div>
       <div class="statcard"><div class="num g">${overallRate}%</div><div class="t">${t('totalRate')}</div></div>
       <div class="statcard"><div class="num o">${totFull}</div><div class="t">${t('fullN')}</div></div></div>
@@ -906,6 +972,18 @@ async function postAnnounce(code){
   await set(ref(db,`courses/${code}/announces/${id}`),{text:txt,by:(ADMIN?ADMIN.name:""),ts:Date.now()});
   toast(bi("공지 발송됨","公告已发布"),"ok"); render(); }
 async function delAnnounce(code,id){ if(!confirm(bi("이 공지를 삭제할까요?","删除这条公告?")))return; await remove(ref(db,`courses/${code}/announces/${id}`)); toast(bi("삭제됨","已删除"),"ok"); render(); }
+// ── 提问中心(私信式)──
+async function postQuestion(code){
+  const txt=$("qaText")?.value.trim(); if(!txt){ toast(bi("질문을 입력하세요","请输入问题"),"warn"); return; }
+  const anon=$("qaAnon")?.checked; const id="q"+Date.now();
+  await set(ref(db,`courses/${code}/questions/${id}`),{sid:ME.id,name:anon?"":ME.name,anon:!!anon,text:txt,ts:Date.now(),reply:"",repliedAt:0});
+  toast(bi("질문이 전송되었습니다","问题已发送"),"ok"); render(); }
+async function replyQuestion(code,qid){
+  const txt=$("rp_"+qid)?.value.trim(); if(!txt){ toast(bi("답변을 입력하세요","请输入回复"),"warn"); return; }
+  await update(ref(db,`courses/${code}/questions/${qid}`),{reply:txt,repliedAt:Date.now(),repliedBy:(ADMIN?ADMIN.name:"")});
+  audit(code,bi("질문 답변","回复提问"),txt.slice(0,20)); toast(bi("답변 완료","已回复"),"ok"); render(); }
+async function delQuestion(code,qid){ if(!confirm(bi("이 질문을 삭제할까요?","删除这条提问?")))return; await remove(ref(db,`courses/${code}/questions/${qid}`)); toast(bi("삭제됨","已删除"),"ok"); render(); }
+
 async function startPhase(code,mid,ph,autoMin){ const sec=randSecret(); const now=Date.now();
   const dur=autoMin||0; const closeAt=dur>0?now+dur*60000:0;
   await update(ref(db,`courses/${code}/meetings/${mid}`), ph==="pre"?{preOpen:true,preAt:now,preSec:sec,preCloseAt:closeAt}:{postOpen:true,postAt:now,postSec:sec,postCloseAt:closeAt});
@@ -1211,6 +1289,30 @@ function adminCourse(code){
       <div class="tip" style="margin:0 0 10px">${bi('해당 주차를 눌러 그 날의 수업을 시작하세요. 시작 후 아래에서 출석을 엽니다.','点对应周次开始那天的课;开始后在下方开签到。')} ${sem.time?('· '+sem.time):''} ${sem.room?('· '+sem.room):''}</div>
       <div>${items}</div></div>`;
   }
+  // 缺席预警学生(整学期缺席≥3)
+  const allMeetIds=Object.keys(meetings); const rosterMap=s.roster||{};
+  const absMap={};
+  const allSids=new Set([...Object.keys(rosterMap), ...allMeetIds.flatMap(id=>Object.keys(meetings[id].checkins||{}))]);
+  allSids.forEach(sid=>{ let absent=0; allMeetIds.forEach(id=>{ const ci=meetings[id].checkins?.[sid]; if(!ci||!(ci.pre||ci.post))absent++; }); if(absent>0)absMap[sid]=absent; });
+  const warnStud=Object.keys(absMap).filter(sid=>absMap[sid]>=3).sort((a,b)=>absMap[b]-absMap[a]);
+  const absWarnCard = (allMeetIds.length&&warnStud.length)?`<div class="card" style="background:#fff1f2;border-color:#fecdd3">
+    <h3 style="margin-bottom:8px;color:var(--red)">⚠️ ${bi('결석 경고 학생','缺席预警学生')} (${warnStud.length})</h3>
+    <div class="tip" style="margin:0 0 8px">${bi('결석 3회 이상','缺席满3次及以上')}</div>
+    ${warnStud.map(sid=>`<div class="crow"><div class="nm">${sid} ${rosterMap[sid]||(allMeetIds.map(id=>meetings[id].checkins?.[sid]?.name).find(n=>n))||''}</div><div style="color:var(--red);font-weight:800">${bi('결석','缺席')} ${absMap[sid]}${bi('회','次')}</div></div>`).join("")}</div>`:"";
+  // 提问中心(助教端:看到所有提问并回复)
+  const qaList=s.questions||{};
+  const qaIds=Object.keys(qaList).sort((a,b)=>(qaList[b].ts||0)-(qaList[a].ts||0));
+  const pendingQA=qaIds.filter(id=>!qaList[id].reply).length;
+  const qaRowsAdmin=qaIds.map(id=>{ const q=qaList[id];
+    const who=q.anon?`<span style="color:var(--muted)">${bi('익명','匿名')}</span>`:`${q.name||''} <span style="color:#9aa3ba">${q.sid||''}</span>`;
+    return `<div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="font-size:13px;font-weight:700">${who}</div><button class="mini clr" data-delqa="${id}" style="padding:4px 8px">✕</button></div>
+      <div style="font-size:14px;margin:6px 0">${q.text}</div><div class="tip" style="margin:0 0 8px">${fmtTime(q.ts)}</div>
+      ${q.reply?`<div style="background:#eff6ff;border-radius:8px;padding:8px 10px;font-size:14px"><b style="color:var(--blue-d)">${bi('답변','回复')}:</b> ${q.reply}<div class="tip" style="margin:3px 0 0">${fmtTime(q.repliedAt)}</div></div>`
+        :`<div style="display:flex;gap:6px"><input id="rp_${id}" placeholder="${bi('답변 입력','输入回复')}" style="flex:1"><button class="mini go" data-replyqa="${id}">${bi('답변','回复')}</button></div>`}</div>`; }).join("");
+  const qaCardAdmin=`<div class="card"><h3 style="margin-bottom:8px">💬 ${bi('질문 센터','提问中心')}${pendingQA?` <span class="badge b-half">${bi('미답변','待回复')} ${pendingQA}</span>`:''}</h3>
+    <div class="tip" style="margin:0 0 8px">${bi('학생 질문에 1:1로 답변합니다 (다른 학생은 볼 수 없음)','回复学生提问,1对1私信(其他学生看不到)')}</div>
+    ${qaRowsAdmin||`<p style="color:#9aa3ba;text-align:center;padding:12px">${bi('아직 질문이 없습니다','还没有提问')}</p>`}</div>`;
   // 公告发布卡片
   const annList=s.announces||{};
   const annRows=Object.keys(annList).sort((a,b)=>(annList[b].ts||0)-(annList[a].ts||0)).map(id=>{ const a=annList[id];
@@ -1272,7 +1374,7 @@ function adminCourse(code){
     <button class="segbtn ${ADMIN_TAB==='ops'?'on':''}" data-atab="ops">🎬 ${bi('운영','上课运营')}</button>
     <button class="segbtn ${ADMIN_TAB==='settings'?'on':''}" data-atab="settings">⚙️ ${bi('설정','设置')}</button></div>`;
 
-  const opsView = `${weekPanel}${opsCard}${projCard}${ciCard}${makeupCard}${annCard}${archCard}`;
+  const opsView = `${weekPanel}${opsCard}${projCard}${ciCard}${absWarnCard}${makeupCard}${qaCardAdmin}${annCard}${archCard}`;
   const setView = `${semSetCard}
     <div class="card" style="text-align:center"><h3>${bi('학생 입장 QR','学生扫码进入')}(${bi('학기 공용','整学期通用')})</h3>
       <div class="tip">${bi('학기 내내 같은 코드','整学期同一码,扫一次长期用')}</div>
@@ -1335,11 +1437,12 @@ function render(){
   if(!ME){ studentLogin(); bindAll(); return; }
   if(VIEW==="me"){ $("app").innerHTML=`<div id="mehold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); meView().then(h=>{const x=$("mehold");if(x){x.innerHTML=h; bindAll();}}); return; }
   if(VIEW==="notify"){ $("app").innerHTML=`<div id="ntfhold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); notifyView().then(h=>{const x=$("ntfhold");if(x){x.innerHTML=h; bindAll();}}); return; }
+  if(VIEW==="qa"){ $("app").innerHTML=`<div id="qahold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); qaView().then(h=>{const x=$("qahold");if(x){x.innerHTML=h; bindAll();}}); return; }
   if((VIEW==="checkin"||VIEW==="seat")&&!COURSE_CODE){ VIEW="home"; }
   let body=VIEW==="home"?homeView():VIEW==="checkin"?checkinView():VIEW==="seat"?seatView():homeView();
-  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v8</div>`;
+  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v9</div>`;
   renderSeatBar(); bindAll();
-  if(VIEW==="home"&&ME) loadTodayClasses();
+  if(VIEW==="home"&&ME){ loadTodayClasses(); loadMyTickets(); }
 }
 // 独立投屏页
 let _screenSub=false;
@@ -1423,6 +1526,9 @@ function bindAll(){
   document.querySelectorAll("[data-reopen]").forEach(b=>b.onclick=()=>{ const [ph,mid]=b.dataset.reopen.split("|"); const c=allCourses[ADMIN_CUR]; startPhase(ADMIN_CUR,mid,ph, ph==="pre"?(c.preMin||5):(c.postMin||5)); });
   $("annPost")&&($("annPost").onclick=()=>postAnnounce(ADMIN_CUR));
   document.querySelectorAll("[data-delann]").forEach(b=>b.onclick=()=>delAnnounce(ADMIN_CUR,b.dataset.delann));
+  $("qaSend")&&($("qaSend").onclick=()=>postQuestion(COURSE_CODE));
+  document.querySelectorAll("[data-replyqa]").forEach(b=>b.onclick=()=>replyQuestion(ADMIN_CUR,b.dataset.replyqa));
+  document.querySelectorAll("[data-delqa]").forEach(b=>b.onclick=()=>delQuestion(ADMIN_CUR,b.dataset.delqa));
   document.querySelectorAll("[data-startweek]").forEach(b=>b.onclick=()=>{ const [w,wd,label]=b.dataset.startweek.split("|"); startWeekMeeting(ADMIN_CUR,+w,+wd,label); });
   $("openFixed")&&($("openFixed").onclick=()=>{ window.open(location.origin+location.pathname+"#screen","_blank","noopener"); });
   document.querySelectorAll("[data-delm]").forEach(b=>b.onclick=()=>delMeeting(ADMIN_CUR,b.dataset.delm));
