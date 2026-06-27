@@ -574,8 +574,7 @@ function homeView(){
   return `<div class="hero"><div class="eyebrow">SEAT + ATTENDANCE</div>
     <h1>${ME?ME.name+t('welcome'):'자리 Jari'}</h1>
     <p>${t('heroP')}</p></div>
-    <div id="todayHold"></div>
-    <div id="myTixHold"></div>
+    <div id="myCoursesHold"></div>
     ${courseCard}
     <div class="tiles">
       <div class="tile" data-go="join"><div class="ic">➕</div><div class="t">${bi('강의 추가','加入课程')}</div><div class="d">${bi('코드 입력 또는 QR 스캔','输码或扫码')}</div></div>
@@ -583,75 +582,64 @@ function homeView(){
     </div>`;
 }
 // 异步加载"今天的课"
-async function loadTodayClasses(){
-  const hold=$("todayHold"); if(!hold||!ME)return;
-  const mine=myCourses(); const codes=Object.keys(mine); if(!codes.length)return;
-  const today=[];
-  await Promise.all(codes.map(async code=>{
-    try{ const s=await get(ref(db,`courses/${code}`)); if(!s.exists())return; const c=s.val();
-      const info=todayMeetingInfo(c); if(info){
-        const seats=c.seats||{}; const myKey=Object.keys(seats).find(k=>seats[k]?.id===ME?.id);
-        const seat=myKey?`${myKey.split("-")[0]*1+1}-${colL(seatColIdx(c,myKey))}`:null;
-        // 今天是否已开签到
-        const am=activeMeeting(c); const live=am&&(c.meetings[am.id].preOpen||c.meetings[am.id].postOpen);
-        today.push({code,name:c.name||code,info,seat,live}); }
-    }catch{}
-  }));
-  if(!today.length){ hold.innerHTML=`<div class="card" style="margin-top:16px;text-align:center"><div style="font-size:15px;font-weight:700;color:var(--muted)">📅 ${bi('오늘은 수업이 없습니다','今天没有课')}</div></div>`; return; }
-  const cards=today.map(x=>`<div class="card" style="margin-top:12px;background:linear-gradient(135deg,#eef7ff,#f8fbff);border:1px solid #d6e8ff;cursor:pointer" data-todaycourse="${x.code}">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start">
-      <div style="flex:1"><div class="tip" style="margin:0">${x.info.label}</div>
-        <h2 style="margin:2px 0">${x.name}</h2>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:13px;color:var(--ink)">
-          ${x.info.time?`<span>🕐 ${x.info.time}</span>`:''}
-          ${x.info.room?`<span>📍 ${x.info.room}</span>`:''}
-          ${x.seat?`<span>🎫 ${bi('내 자리','座位')} <b style="color:var(--blue)">${x.seat}</b></span>`:`<span style="color:var(--muted)">${bi('좌석 미선택','未选座')}</span>`}</div></div>
-      <div>${x.live?`<span class="badge b-ok">🔴 ${bi('출석중','签到中')}</span>`:`<span class="badge b-half">${bi('대기','待开始')}</span>`}</div></div></div>`).join("");
-  hold.innerHTML=`<div style="margin-top:16px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:1px">📅 ${bi('오늘의 수업','今天的课')}</div>${cards}`;
-  hold.querySelectorAll("[data-todaycourse]").forEach(b=>b.onclick=()=>{ const code=b.dataset.todaycourse; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); });
-}
-// 我的课程:演唱会门票样式
-async function loadMyTickets(){
-  const hold=$("myTixHold"); if(!hold||!ME)return;
-  const mine=myCourses(); const codes=Object.keys(mine); if(!codes.length)return;
-  const tix=[];
+let MYCOURSE_CACHE={};
+async function loadMyCourses(){
+  const hold=$("myCoursesHold"); if(!hold||!ME)return;
+  const mine=myCourses(); const codes=Object.keys(mine);
+  if(!codes.length){ hold.innerHTML=`<div class="card" style="margin-top:16px;text-align:center"><p style="color:#9aa3ba;padding:14px">${bi('아직 강의가 없습니다. 아래 「강의 추가」로 입장하세요.','还没有课程。点下面「加入课程」进入。')}</p></div>`; return; }
+  const list=[];
   await Promise.all(codes.map(async code=>{
     try{ const s=await get(ref(db,`courses/${code}`)); if(!s.exists())return; const c=s.val();
       const seats=c.seats||{}; const myKey=Object.keys(seats).find(k=>seats[k]?.id===ME?.id);
       const seat=myKey?`${myKey.split("-")[0]*1+1}-${colL(seatColIdx(c,myKey))}`:null;
       const sem=c.semester||{};
-      // 出勤率
       const mk=Object.keys(c.meetings||{}); let full=0; mk.forEach(id=>{ const ci=c.meetings[id].checkins?.[ME.id]; if(ci&&ci.pre&&ci.post)full++; });
       const rate=mk.length?Math.round(full/mk.length*100):0;
-      tix.push({code,name:c.name||code,seat,time:sem.time||"",room:sem.room||"",rate}); }
+      const todayInfo=todayMeetingInfo(c);
+      const am=activeMeeting(c); const live=am&&(c.meetings[am.id].preOpen||c.meetings[am.id].postOpen);
+      list.push({code,name:c.name||code,seat,time:sem.time||"",room:sem.room||"",rate,today:!!todayInfo,todayLabel:todayInfo?todayInfo.label:"",live:!!live}); }
     catch{}
   }));
-  if(!tix.length)return;
-  // 渐变色池(每张票不同色)
+  if(!list.length)return;
+  // 今天有课的排前面
+  list.sort((a,b)=>(b.today?1:0)-(a.today?1:0));
+  MYCOURSE_CACHE={}; list.forEach((x,i)=>{ x.idx=i; MYCOURSE_CACHE[x.code]=x; });
   const grads=["linear-gradient(135deg,#2563eb,#0ea5e9)","linear-gradient(135deg,#7c3aed,#db2777)","linear-gradient(135deg,#059669,#10b981)","linear-gradient(135deg,#ea580c,#f59e0b)","linear-gradient(135deg,#0891b2,#6366f1)"];
-  const tickets=tix.map((x,i)=>{ const g=grads[i%grads.length];
-    return `<div data-tixcourse="${x.code}" style="cursor:pointer;margin-top:12px;border-radius:18px;overflow:hidden;box-shadow:0 4px 16px rgba(30,50,90,.12);background:#fff;border:1px solid var(--line)">
-      <div style="background:${g};color:#fff;padding:16px 18px 14px;position:relative">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div><div style="font-size:10px;letter-spacing:2px;opacity:.85;font-weight:800">JARI · ${bi('수강권','听课票')}</div>
-            <div style="font-size:19px;font-weight:800;margin-top:3px;line-height:1.15">${x.name}</div></div>
-          <div style="text-align:right;flex:none"><div style="font-size:10px;opacity:.8">${bi('출석','出勤')}</div><div style="font-size:18px;font-weight:800">${x.rate}%</div></div></div>
-        <div style="font-size:11px;opacity:.85;margin-top:4px;letter-spacing:1px">[${x.code}]</div>
-      </div>
-      <div style="position:relative;height:0;border-top:2px dashed var(--line2)"><span style="position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:var(--bg)"></span><span style="position:absolute;right:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:var(--bg)"></span></div>
-      <div style="display:flex;padding:14px 18px;gap:14px;align-items:center">
-        <div style="flex:none;text-align:center;min-width:64px">
-          <div class="tip" style="margin:0;font-size:10px">${bi('좌석','座位')}</div>
-          <div style="font-size:26px;font-weight:800;color:${x.seat?'var(--blue-d)':'var(--faint)'};line-height:1.1">${x.seat||'—'}</div></div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink)">
-          ${x.time?`<div>🕐 ${x.time}</div>`:''}
-          ${x.room?`<div>📍 ${x.room}</div>`:''}
-          ${!x.time&&!x.room?`<div class="tip" style="margin:0">${bi('시간·강의실 미설정','未设时间·教室')}</div>`:''}
-          <div style="font-size:11px;color:var(--muted)">${ME.name} · ${ME.id}</div></div>
-        <div style="flex:none;color:var(--faint);font-size:20px">›</div></div></div>`;
+  const rows=list.map(x=>{ const g=grads[x.idx%grads.length];
+    return `<div data-mycourse="${x.code}" style="cursor:pointer;margin-top:10px;background:#fff;border:1px solid ${x.today?'#bfdbfe':'var(--line)'};border-radius:14px;padding:14px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;${x.today?'background:linear-gradient(135deg,#eef7ff,#f8fbff)':''}">
+      <div style="flex:none;width:46px;height:46px;border-radius:12px;background:${g};display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:800">${x.seat||'🎫'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px"><span style="font-weight:800;font-size:15px">${x.name}</span>${x.today?`<span class="badge ${x.live?'b-ok':'b-half'}" style="font-size:10px">${x.live?bi('🔴 출석중','🔴 签到中'):bi('오늘','今天')}</span>`:''}</div>
+        <div class="tip" style="margin:2px 0 0">${x.seat?bi('좌석 ','座位 ')+x.seat:bi('좌석 미선택','未选座')}${x.room?' · 📍'+x.room:''} · ${bi('출석','出勤')} ${x.rate}%</div></div>
+      <div style="flex:none;color:var(--faint);font-size:20px">›</div></div>`;
   }).join("");
-  hold.innerHTML=`<div style="margin-top:18px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:1px">🎫 ${bi('내 강의','我的课程')}</div>${tickets}`;
-  hold.querySelectorAll("[data-tixcourse]").forEach(b=>b.onclick=()=>{ const code=b.dataset.tixcourse; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); });
+  hold.innerHTML=`<div style="margin-top:16px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:1px">🎫 ${bi('내 강의','我的课程')}</div>${rows}`;
+  hold.querySelectorAll("[data-mycourse]").forEach(b=>b.onclick=()=>showCourseTicket(b.dataset.mycourse));
+}
+// 点课程弹出演唱会门票
+function showCourseTicket(code){
+  const x=MYCOURSE_CACHE[code]; if(!x)return;
+  const grads=["linear-gradient(135deg,#2563eb,#0ea5e9)","linear-gradient(135deg,#7c3aed,#db2777)","linear-gradient(135deg,#059669,#10b981)","linear-gradient(135deg,#ea580c,#f59e0b)","linear-gradient(135deg,#0891b2,#6366f1)"];
+  const g=grads[(x.idx||0)%grads.length];
+  $("modal").innerHTML=`<div class="overlay" id="tkov"><div class="modal" style="padding:0;overflow:hidden;max-width:340px">
+    <div style="background:${g};color:#fff;padding:20px 22px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div style="font-size:10px;letter-spacing:2px;opacity:.85;font-weight:800">JARI · ${bi('수강권','听课票')}</div>
+          <div style="font-size:21px;font-weight:800;margin-top:3px">${x.name}</div>
+          <div style="font-size:11px;opacity:.85;margin-top:2px;letter-spacing:1px">[${x.code}]</div></div>
+        <div style="text-align:right;flex:none"><div style="font-size:10px;opacity:.8">${bi('출석','出勤')}</div><div style="font-size:20px;font-weight:800">${x.rate}%</div></div></div></div>
+    <div style="position:relative;height:0;border-top:2px dashed var(--line2)"><span style="position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:#fff"></span><span style="position:absolute;right:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:#fff"></span></div>
+    <div style="display:flex;padding:16px 22px;gap:16px;align-items:center">
+      <div style="flex:none;text-align:center;min-width:66px"><div class="tip" style="margin:0;font-size:10px">${bi('좌석','座位')}</div>
+        <div style="font-size:30px;font-weight:800;color:${x.seat?'var(--blue-d)':'var(--faint)'};line-height:1.1">${x.seat||'—'}</div></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink)">
+        ${x.time?`<div>🕐 ${x.time}</div>`:''}${x.room?`<div>📍 ${x.room}</div>`:''}
+        ${!x.time&&!x.room?`<div class="tip" style="margin:0">${bi('시간·강의실 미설정','未设时间·教室')}</div>`:''}
+        <div style="font-size:11px;color:var(--muted)">${ME.name} · ${ME.id}</div></div></div>
+    <div style="padding:0 22px 20px"><button class="btn" id="tkEnter" style="width:100%">${bi('강의 입장 (출석·좌석·기록)','进入课程(签到·座位·记录)')}</button>
+      <button class="no" id="tkClose" style="width:100%;margin-top:8px">${t('cancel')}</button></div></div></div>`;
+  $("tkEnter").onclick=()=>{ $("modal").innerHTML=""; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); };
+  $("tkClose").onclick=()=>$("modal").innerHTML=""; $("tkov").onclick=e=>{if(e.target.id==="tkov")$("modal").innerHTML="";};
 }
 function joinPrompt(){
   $("modal").innerHTML=`<div class="overlay" id="ov"><div class="modal"><h3>${bi('강의 추가','加入课程')}</h3>
@@ -1482,9 +1470,9 @@ function render(){
   else if(VIEW==="seat") body=courseTabBar("seat")+seatView();
   else if(VIEW==="courserec") body=courseTabBar("courserec")+courseRecView();
   else body=homeView();
-  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v10</div>`;
+  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v11</div>`;
   renderSeatBar(); bindAll();
-  if(VIEW==="home"&&ME){ loadTodayClasses(); loadMyTickets(); }
+  if(VIEW==="home"&&ME){ loadMyCourses(); }
 }
 // 独立投屏页
 let _screenSub=false;
