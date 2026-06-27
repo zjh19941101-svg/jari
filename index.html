@@ -374,7 +374,9 @@ onAuthStateChanged(auth, user=>{
   }
 });
 
-let ME=isAdmin?null:lastMe();
+let REMEMBERED=isAdmin?null:lastMe();
+let ME=null;
+let WANT_SWITCH=false;
 let COURSE_CODE=(location.hash.match(/c=([A-Z0-9]{4,6})/i)||[])[1]?.toUpperCase()||null;
 let COURSE=null, allCourses={}, allCoursesCache={};
 let VIEW=isAdmin?"manage":"home";
@@ -467,14 +469,11 @@ function buildDrawer(){
   } else if(isAdmin){ items=`<div class="ditem on" data-go="manage"><span class="ic">🔑</span>${bi('로그인','登录')}</div>
     <div class="dsep"></div><div class="ditem" data-go="exitadmin"><span class="ic">↩︎</span>${t('studentView')}</div>`;
   } else { const dis=COURSE_CODE?"":"style='opacity:.5'";
-    items=`<div class="ditem ${VIEW==='home'?'on':''}" data-go="home"><span class="ic">🏠</span>${t('home')}</div>
-      <div class="ditem ${VIEW==='checkin'?'on':''}" data-go="checkin" ${dis}><span class="ic">✓</span>${t('checkin')}</div>
-      <div class="ditem ${VIEW==='seat'?'on':''}" data-go="seat" ${dis}><span class="ic">🎫</span>${t('seat')}</div>
-      <div class="ditem ${VIEW==='me'?'on':''}" data-go="me"><span class="ic">📊</span>${t('myrec')}</div>
+    items=`<div class="ditem ${VIEW==='home'?'on':''}" data-go="home"><span class="ic">🏠</span>${bi('내 강의','我的课程')}</div>
+      <div class="ditem ${VIEW==='me'?'on':''}" data-go="me"><span class="ic">📊</span>${bi('전체 기록','总览记录')}</div>
       <div class="ditem ${VIEW==='notify'?'on':''}" data-go="notify"><span class="ic">🔔</span>${bi('알림 센터','通知中心')}</div>
       <div class="ditem ${VIEW==='qa'?'on':''}" data-go="qa" ${dis}><span class="ic">💬</span>${bi('질문하기','提问')}</div>
-      <div class="dsep"></div><div class="ditem" data-go="scan"><span class="ic">📷</span>${t('scan')}</div>
-      <div class="ditem" data-go="join"><span class="ic">🔑</span>${t('joinCourse')}</div>
+      <div class="dsep"></div><div class="ditem" data-go="join"><span class="ic">➕</span>${bi('강의 추가','加入课程')}</div>
       ${ME?`<div class="ditem" data-go="logout"><span class="ic">⎋</span>${t('changeId')}</div>`:''}`; }
   const langRow=`<div class="dsep"></div><div class="ditem" data-go="lang"><span class="ic">🌐</span>${bi('언어','语言')} · ${LANG==="zh"?"中文":"한국어"}</div><div class="ditem" data-go="install"><span class="ic">📲</span>${bi('홈 화면에 추가','添加到主屏幕')}</div>`;
   $("drawer").innerHTML=`<div class="dhead"><div class="t">${isAdmin?t('adminMenu'):t('menu')}</div><div class="s">${isAdmin?(ADMIN?ADMIN.name:''):(ME?ME.name+' · '+ME.id:bi('미로그인','未登录'))}</div></div>${items}${langRow}`;
@@ -488,13 +487,49 @@ function drawerNav(go){ openDrawer(false);
   if(go==="exitadmin"){ location.hash=""; location.reload(); return; }
   if(go==="adminout"){ adminLogout(); return; }
   if(go==="overview"){ ADMIN_CUR=null; ADMIN_VIEW="overview"; render(); return; }
-  if(go==="logout"){ ME=null; VIEW="home"; render(); return; }
+  if(go==="logout"){ ME=null; WANT_SWITCH=true; VIEW="home"; render(); return; }
   if(go==="join"){ COURSE_CODE=null; location.hash=""; VIEW="home"; render(); joinPrompt(); return; }
   if(go==="manage"){ ADMIN_CUR=null; ADMIN_VIEW="list"; render(); return; }
   if((go==="checkin"||go==="seat")&&!COURSE_CODE){ toast(bi("먼저 강의 입장","先进入课程"),"warn"); joinPrompt(); return; }
   VIEW=go; HOLD=null; render();
 }
 
+function confirmIdentityView(){
+  return `<div class="pagehead"><h1>${bi('환영합니다','欢迎')}</h1><div class="sub">${bi('현재 로그인 정보를 확인하세요','请确认当前身份')}</div></div>
+    <div class="card" style="text-align:center;padding:28px 22px">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#2563eb,#0ea5e9);color:#fff;font-size:26px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 14px">${(REMEMBERED.name||'?').slice(0,1)}</div>
+      <div style="font-size:20px;font-weight:800">${REMEMBERED.name}</div>
+      <div class="tip" style="margin:4px 0 0;font-size:14px">${REMEMBERED.id}</div>
+      <button class="btn" id="useThis" style="margin-top:20px">${bi('이 계정으로 계속','继续使用')}</button>
+      <button class="btn ghost" id="switchId" style="margin-top:10px">${bi('다른 학번으로 전환','切换学号')}</button>
+    </div>
+    <div class="tip" style="text-align:center;margin-top:10px">${bi('공용 기기라면 「전환」을 눌러 본인 학번으로 로그인하세요','公共设备请点「切换」用自己的学号登录')}</div>`;
+}
+function courseTabBar(active){
+  return `<div class="seg" style="margin-bottom:14px">
+    <button class="segbtn ${active==='checkin'?'on':''}" data-ctab="checkin">✓ ${bi('출석','签到')}</button>
+    <button class="segbtn ${active==='seat'?'on':''}" data-ctab="seat">🎫 ${bi('좌석','座位')}</button>
+    <button class="segbtn ${active==='courserec'?'on':''}" data-ctab="courserec">📊 ${bi('기록','记录')}</button></div>`;
+}
+function courseRecView(){
+  if(!COURSE) return `<div class="banner">${bi('강의 정보 없음','无课程信息')}</div>`;
+  const mk=Object.keys(COURSE.meetings||{}).filter(id=>{ const m=COURSE.meetings[id]; return m.preAt||m.postAt; });
+  let full=0,half=0,absent=0;
+  const rows=mk.map(id=>{ const m=COURSE.meetings[id]; const ci=m.checkins?.[ME.id];
+    const st=ci?((ci.pre&&ci.post)?'full':(ci.pre||ci.post)?'half':'absent'):'absent';
+    if(st==='full')full++; else if(st==='half')half++; else absent++;
+    const lbl=st==='full'?`<span class="badge b-ok">✓ ${bi('완전','完整')}</span>`:st==='half'?`<span class="badge b-half">◐ ${bi('일부','一半')}</span>`:`<span class="badge b-no">✕ ${bi('결석','缺席')}</span>`;
+    return `<div class="crow"><div><div class="nm">${m.title||new Date(m.at).toLocaleDateString()}</div></div>${lbl}</div>`; }).join("");
+  const rate=mk.length?Math.round(full/mk.length*100):0;
+  const seats=COURSE.seats||{}; const myKey=Object.keys(seats).find(k=>seats[k]?.id===ME.id);
+  const seat=myKey?`${myKey.split("-")[0]*1+1}-${colL(seatColIdx(COURSE,myKey))}`:null;
+  return `<div class="pagehead"><h1>📊 ${bi('이 강의 기록','本课记录')}</h1><div class="sub">${COURSE.name||COURSE_CODE}</div></div>
+    <div class="stat"><div class="statcard"><div class="num g">${rate}%</div><div class="t">${bi('출석률','出勤率')}</div></div>
+      <div class="statcard"><div class="num b">${full}</div><div class="t">${bi('완전','完整')}</div></div>
+      <div class="statcard"><div class="num r">${absent}</div><div class="t">${bi('결석','缺席')}</div></div></div>
+    ${seat?`<div class="card" style="display:flex;align-items:center;gap:12px"><div style="flex:none;width:60px;height:54px;background:linear-gradient(135deg,#2563eb,#0ea5e9);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff"><span style="font-size:9px;opacity:.85">${bi('좌석','座位')}</span><span style="font-size:17px;font-weight:800">${seat}</span></div><div><div style="font-weight:800">${bi('내 좌석','我的座位')}</div><div class="tip" style="margin:1px 0 0">${ME.name} · ${ME.id}</div></div></div>`:''}
+    <div class="card"><h3 style="margin-bottom:8px">${bi('회차별 출석','各次出勤')}</h3>${rows||`<p style="color:#9aa3ba;text-align:center;padding:14px">${bi('아직 수업 기록이 없습니다','还没有上课记录')}</p>`}</div>`;
+}
 function studentLogin(){
   $("app").innerHTML=`<div class="pagehead"><h1>${t('startTitle')}</h1><div class="sub">${t('enterId')}</div></div>
     <div class="card"><h2>${bi('학번 입력','输入学号')}</h2>
@@ -506,8 +541,8 @@ function studentLogin(){
       <div class="tip">${bi('학번 입력 후 강의 QR을 스캔하세요','输完学号后,扫课程二维码进入')}</div>
       <button class="btn ghost" id="loginScan" style="margin-top:10px">📷 ${t('scan')}</button></div>`;
   $("sid").oninput=()=>{ const nm=recallName($("sid").value.trim()); if(nm&&!$("sname").value)$("sname").value=nm; };
-  $("enter").onclick=()=>{ const id=$("sid").value.trim(),name=$("sname").value.trim(); if(!id||!name){toast(bi("학번·이름 입력","请输入学号和姓名"),"warn");return;} ME={id,name}; saveMe(id,name); VIEW="home"; render(); };
-  $("loginScan").onclick=()=>{ const id=$("sid").value.trim(),name=$("sname").value.trim(); if(!id||!name){toast(bi("먼저 학번·이름 입력","请先输入学号和姓名"),"warn");return;} ME={id,name}; saveMe(id,name); openScanner(); };
+  $("enter").onclick=()=>{ const id=$("sid").value.trim(),name=$("sname").value.trim(); if(!id||!name){toast(bi("학번·이름 입력","请输入学号和姓名"),"warn");return;} ME={id,name}; saveMe(id,name); REMEMBERED={id,name}; WANT_SWITCH=false; VIEW="home"; render(); };
+  $("loginScan").onclick=()=>{ const id=$("sid").value.trim(),name=$("sname").value.trim(); if(!id||!name){toast(bi("먼저 학번·이름 입력","请先输入学号和姓名"),"warn");return;} ME={id,name}; saveMe(id,name); REMEMBERED={id,name}; WANT_SWITCH=false; openScanner(); };
 }
 function homeView(){
   const m=COURSE?activeMeeting(COURSE):null;
@@ -543,10 +578,8 @@ function homeView(){
     <div id="myTixHold"></div>
     ${courseCard}
     <div class="tiles">
-      <div class="tile" data-go="checkin"><div class="ic">✓</div><div class="t">${t('tCheckin')}</div><div class="d">${checkinD}</div></div>
-      <div class="tile" data-go="seat"><div class="ic">🎫</div><div class="t">${t('tSeat')}</div><div class="d">${seatD}</div></div>
-      <div class="tile" data-go="me"><div class="ic">📊</div><div class="t">${t('tRec')}</div><div class="d">${bi('강의별 출석률·좌석','各课出勤率·座位')}</div></div>
-      <div class="tile" data-go="join"><div class="ic">🔑</div><div class="t">${t('joinCourse')}</div><div class="d">${COURSE?t('switchCourse'):bi('코드로 입장','输码进入')}</div></div>
+      <div class="tile" data-go="join"><div class="ic">➕</div><div class="t">${bi('강의 추가','加入课程')}</div><div class="d">${bi('코드 입력 또는 QR 스캔','输码或扫码')}</div></div>
+      <div class="tile" data-go="me"><div class="ic">📊</div><div class="t">${bi('전체 기록','总览记录')}</div><div class="d">${bi('모든 강의 출석·좌석','所有课出勤·座位')}</div></div>
     </div>`;
 }
 // 异步加载"今天的课"
@@ -621,14 +654,17 @@ async function loadMyTickets(){
   hold.querySelectorAll("[data-tixcourse]").forEach(b=>b.onclick=()=>{ const code=b.dataset.tixcourse; location.hash=`c=${code}`; COURSE=null; COURSE_CODE=code; subscribeCourse(code); VIEW="checkin"; render(); });
 }
 function joinPrompt(){
-  $("modal").innerHTML=`<div class="overlay" id="ov"><div class="modal"><h3>${bi('강의 입장','进入课程')}</h3>
-    <p class="lead" style="margin:10px 0 14px">${bi('조교가 준 강의 코드 입력','输入助教给的课程码(整学期通用)')}</p>
+  $("modal").innerHTML=`<div class="overlay" id="ov"><div class="modal"><h3>${bi('강의 추가','加入课程')}</h3>
+    <p class="lead" style="margin:10px 0 14px">${bi('조교가 준 강의 코드를 입력하거나 QR을 스캔하세요','输入助教给的课程码,或扫描课程二维码')}</p>
     <input id="jc" placeholder="K7F2" style="text-transform:uppercase;text-align:center;font-size:22px;letter-spacing:4px"/>
-    <div class="acts" style="margin-top:16px"><button class="no" id="jn">${t('cancel')}</button><button class="ok" id="jok">${t('enter')}</button></div></div></div>`;
+    <button class="btn" id="jok" style="margin-top:12px">${bi('코드로 입장','输码进入')}</button>
+    <button class="btn ghost" id="jscan" style="margin-top:8px">📷 ${bi('QR 스캔으로 입장','扫码进入')}</button>
+    <button class="no" id="jn" style="width:100%;margin-top:8px">${t('cancel')}</button></div></div>`;
   $("jn").onclick=()=>$("modal").innerHTML=""; $("ov").onclick=e=>{if(e.target.id==="ov")$("modal").innerHTML="";};
   const doJoin=()=>{ const c=$("jc").value.trim().toUpperCase(); if(c.length<4){toast(bi("코드 확인","请检查课程码"),"warn");return;}
     $("modal").innerHTML=""; COURSE=null; COURSE_CODE=c; location.hash=`c=${c}`; VIEW="checkin"; subscribeCourse(c); render(); toast(bi("입장 중…","进入中…"),"info"); };
   $("jok").onclick=doJoin; $("jc").onkeydown=e=>{if(e.key==="Enter")doJoin();};
+  $("jscan").onclick=()=>{ $("modal").innerHTML=""; openScanner(); };
   setTimeout(()=>{const el=$("jc"); if(el)el.focus();},100);
 }
 
@@ -1434,13 +1470,19 @@ function render(){
     try{ $("app").innerHTML=ADMIN_VIEW==="overview"?adminOverview():ADMIN_CUR?adminCourse(ADMIN_CUR):adminManage(); }
     catch(e){ console.error(e); $("app").innerHTML=`<div class="card"><h3>${bi("오류","出错")}</h3><p class="lead">${bi("데이터 문제일 수 있어요.","数据可能有问题。")}</p><button class="btn ghost" id="bk">${bi("목록","返回列表")}</button></div>`; const b=$("bk"); if(b)b.onclick=()=>{ADMIN_CUR=null;ADMIN_VIEW="list";render();}; }
     $("bar").innerHTML=""; bindAll(); return; }
-  if(!ME){ studentLogin(); bindAll(); return; }
+  if(!ME){
+    if(REMEMBERED&&!WANT_SWITCH){ $("app").innerHTML=confirmIdentityView(); bindAll(); return; }
+    studentLogin(); bindAll(); return; }
   if(VIEW==="me"){ $("app").innerHTML=`<div id="mehold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); meView().then(h=>{const x=$("mehold");if(x){x.innerHTML=h; bindAll();}}); return; }
   if(VIEW==="notify"){ $("app").innerHTML=`<div id="ntfhold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); notifyView().then(h=>{const x=$("ntfhold");if(x){x.innerHTML=h; bindAll();}}); return; }
   if(VIEW==="qa"){ $("app").innerHTML=`<div id="qahold"><p style="text-align:center;color:#9aa3ba;padding:40px">${bi('불러오는 중…','加载中…')}</p></div>`; bindAll(); qaView().then(h=>{const x=$("qahold");if(x){x.innerHTML=h; bindAll();}}); return; }
-  if((VIEW==="checkin"||VIEW==="seat")&&!COURSE_CODE){ VIEW="home"; }
-  let body=VIEW==="home"?homeView():VIEW==="checkin"?checkinView():VIEW==="seat"?seatView():homeView();
-  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v9</div>`;
+  if((VIEW==="checkin"||VIEW==="seat"||VIEW==="courserec")&&!COURSE_CODE){ VIEW="home"; }
+  let body;
+  if(VIEW==="checkin") body=courseTabBar("checkin")+checkinView();
+  else if(VIEW==="seat") body=courseTabBar("seat")+seatView();
+  else if(VIEW==="courserec") body=courseTabBar("courserec")+courseRecView();
+  else body=homeView();
+  $("app").innerHTML=body+`<div class="foot">${bi('실시간 동기화','实时同步')} · ${COURSE_CODE?bi('코드','码')+' '+COURSE_CODE:bi('코드 없음','无课程码')} · v10</div>`;
   renderSeatBar(); bindAll();
   if(VIEW==="home"&&ME){ loadTodayClasses(); loadMyTickets(); }
 }
@@ -1512,6 +1554,9 @@ function bindAll(){
   document.querySelectorAll(".cell").forEach(b=>b.onclick=()=>{const r=+b.dataset.r,c=+b.dataset.c; if(isAdmin)paintCell(ADMIN_CUR,r,c); else holdSeat(r,c);});
   $("newC")&&($("newC").onclick=()=>createCourse($("nName").value.trim(),+$("nLate").value||15));
   document.querySelectorAll("[data-unbind]").forEach(b=>b.onclick=()=>unbindStudent(ADMIN_CUR,b.dataset.unbind));
+  document.querySelectorAll("[data-ctab]").forEach(b=>b.onclick=()=>{ VIEW=b.dataset.ctab; render(); });
+  $("useThis")&&($("useThis").onclick=()=>{ ME={id:REMEMBERED.id,name:REMEMBERED.name}; WANT_SWITCH=false; VIEW="home"; render(); });
+  $("switchId")&&($("switchId").onclick=()=>{ WANT_SWITCH=true; render(); });
   $("renameMe")&&($("renameMe").onclick=()=>changeMyName());
   $("loadTrash")&&($("loadTrash").onclick=loadTrash);
   document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{ADMIN_CUR=b.dataset.open;ADMIN_VIEW="list";ADMIN_TAB="ops";render();});
